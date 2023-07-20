@@ -54,8 +54,17 @@ data = pd.read_csv('csv_files/processed_afib_data.csv')
 
 # notes_half_1_sentences = pickle.load(open('list_of_sentences.p', 'rb'))
 
-classifier = pipeline(model='google/flan-t5-xxl', device_map="auto")
+# classifier = pipeline(model='google/flan-t5-small', device_map="auto")
 # classifier = pipeline(model='google/flan-t5-xxl')
+
+tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-small")
+model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-small", device_map="auto")
+
+input_text = "translate English to German: how old are you?"
+input_ids = tokenizer(input_text, return_tensors="pt").input_ids.to("cuda")
+
+outputs = model.generate(input_ids, max_new_tokens=99999)
+print(tokenizer.decode(outputs[0])[6:-4])
 
 # apply the constraint and also ask the model to evaluate yes or no
 
@@ -83,10 +92,10 @@ for index, row in data.iterrows():
 
     # predictions.append(sentence_level_classifier_half(sentences, classifier))
 
-    # cnt += 1
+    cnt += 1
 
-    # if cnt == 5:
-    #     break
+    if cnt == 5:
+        break
 
 prediction_data = pd.DataFrame({'prediction': predictions})
 prediction_data.to_csv('csv_files/predictions-xxl-document-half2.csv', index=False)
