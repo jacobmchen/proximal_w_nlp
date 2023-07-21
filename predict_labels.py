@@ -7,95 +7,79 @@ import spacy
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 # function for applying the prompt constraint
-def apply_prompt(text):
-    return 'Context: ' + text + '\nIs it likely the patient has atrial fibrillation?"\nConstraint: Even if you are uncertain, you must pick either “Yes” or “No” without using any other words.'
+def apply_prompt(condition, text):
+    return 'Context: ' + text + '\nIs it likely the patient has '+ condition +'?\nConstraint: Even if you are uncertain, you must pick either “Yes” or “No” without using any other words.'
 
 def check_token(token):
     if token != 'Yes' and token != 'No':
         print('generated weird token:', token)
 
-def document_level_classifier(text, classifier):
+def document_level_classifier(condition, text, tokenizer, model):
 
-    # document = ''
-    # for sentence in sentences:
-    #     document += sentence
-    prediction = classifier(apply_prompt(text))
+    input_ids = tokenizer(apply_prompt(condition, text), return_tensors="pt").input_ids.to("cuda")
 
-    check_token(prediction[0]['generated_text'])
+    outputs = model.generate(input_ids, max_new_tokens=99999)
 
-    if prediction[0]['generated_text'] == 'Yes':
+    prediction = tokenizer.decode(outputs[0])[6:-4]
+
+    check_token(prediction)
+
+    if prediction == 'Yes':
         return 1
     else:
         return 0
 
-def sentence_level_classifier(sentences, classifier):
+def sentence_level_classifier(condition, sentences, tokenizer, model):
+    # still need to implement a function for splitting sentences
+
     for sentence in sentences:
-        prediction = classifier(apply_prompt(sentence))
-        check_token(prediction[0]['generated_text'])
-        if prediction[0]['generated_text'] == 'Yes':
+        input_ids = tokenizer(apply_prompt(condition, sentence), return_tensors="pt").input_ids.to("cuda")
+
+        outputs = model.generate(input_ids, max_new_tokens=99999)
+
+        prediction = tokenizer.decode(outputs[0])[6:-4]
+
+        check_token(prediction)
+        if prediction == 'Yes':
             return 1
 
     return 0
 
-def sentence_level_classifier_half(sentences, classifier):
-    yes_label = 0
-    for sentence in sentences:
-        prediction = classifier(apply_prompt(sentence))
-        check_token(prediction[0]['generated_text'])
-        if prediction[0]['generated_text'] == 'Yes':
-            yes_label += 1
+def predict_labels(condition, method='document', testing=False):
+    # condition is what you would like to insert into the prompt
+    # type is whether you want to be using a document level classifier or a sentence level classifier
+    # if testing is set to True, then the program will terminate after processing the first 5 rows of data
 
-    if yes_label > (len(sentences) // 2):
-        return 1
-    else:
-        return 0
+    data = pd.read_csv('csv_files/master_data.csv')
 
-data = pd.read_csv('csv_files/processed_afib_data.csv')
+    tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-xxl")
+    model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-xxl", device_map="auto")
 
-# notes_half_1_sentences = pickle.load(open('list_of_sentences.p', 'rb'))
+    # apply the constraint and also ask the model to evaluate yes or no
 
-# classifier = pipeline(model='google/flan-t5-small', device_map="auto")
-# classifier = pipeline(model='google/flan-t5-xxl')
+    # this list stores the predictions
+    predictions = []
 
-tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-small")
-model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-small", device_map="auto")
+    all_sentences = pickle.load(open('list_of_sentences.p', 'rb'))
 
-input_text = "translate English to German: how old are you?"
-input_ids = tokenizer(input_text, return_tensors="pt").input_ids.to("cuda")
+    for index, row in data.iterrows():
+        if testing:
+            if index == 5:
+                break
 
-outputs = model.generate(input_ids, max_new_tokens=99999)
-print(tokenizer.decode(outputs[0])[6:-4])
+        #############################
+        # the following code is for document level classification
+        #############################
 
-# apply the constraint and also ask the model to evaluate yes or no
+        if method == 'document':
+            predictions.append(document_level_classifier(condition, row['notes_half1'], tokenizer, model))
 
-# this list stores the predictions
-predictions = []
+        #############################
+        # the following code is for sentence level classification
+        #############################
 
-cnt = 0
+        if method == 'sentence':
+            predictions.append(sentence_level_classifier(condition, all_sentences[index], tokenizer, model))
 
-for index, row in data.iterrows():
-    #############################
-    # the following code is for document level classification
-    #############################
-
-    predictions.append(document_level_classifier(row['notes_half2'], classifier))
-
-    #############################
-    # the following code is for sentence level classification
-    #############################
-
-    # predictions.append(sentence_level_classifier(sentences, classifier))
-
-    #############################
-    # the following code is for sentence level classification, but more than half the labels need to be yes
-    #############################
-
-    # predictions.append(sentence_level_classifier_half(sentences, classifier))
-
-    cnt += 1
-
-    if cnt == 5:
-        break
-
-prediction_data = pd.DataFrame({'prediction': predictions})
-prediction_data.to_csv('csv_files/predictions-xxl-document-half2.csv', index=False)
+    prediction_data = pd.DataFrame({'prediction': predictions})
+    prediction_data.to_csv('csv_files/predictions-xxl-'+ condition.replace(' ', '') + '-' + method +'.csv', index=False)
