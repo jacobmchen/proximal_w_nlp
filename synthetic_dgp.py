@@ -17,23 +17,67 @@ from odds_ratio import *
 from backdoor import *
 from bag_of_words import *
 
-def run_semi_synthetic_dgp(oracle='afib', verbose=False):
+def create_semi_synthetic_dataframe(oracle, W, Z, causal_effect=1.3, seed=1):
+    master_data = pd.read_csv('csv_files/master_data.csv')
+
+    semi_synthetic_data = pd.DataFrame({'U': master_data[oracle], 'W': W, 'Z': Z,
+                                    'age': master_data['age'], 'gender': master_data['gender']})
+        
+    # generate semi-synthetic data
+    np.random.seed(seed)
+
+    size = len(semi_synthetic_data)
+
+    C = np.random.normal(76.4, 56.8, size)
+
+    # age is a fairly large continuous variable, so it is necessary to make it smaller
+    A = np.random.binomial(1, expit(0.8*semi_synthetic_data['U'] + 0.8*semi_synthetic_data['gender'] + 0.8*(semi_synthetic_data['age'] - 67)), size)
+    # A = np.random.binomial(1, expit(0.8*semi_synthetic_data['U'] + 0.8*semi_synthetic_data['gender']), size)
+
+    Y = np.random.normal(0, 1, size) + causal_effect*A + 1.4*semi_synthetic_data['U'] + 0.8*semi_synthetic_data['gender'] + 0.5*semi_synthetic_data['age']
+    # Y = np.random.normal(0, 1, size) + 1.3*A + 1.4*semi_synthetic_data['U'] + 0.8*semi_synthetic_data['gender']
+
+    semi_synthetic_data['A'] = A
+    semi_synthetic_data['Y'] = Y
+    semi_synthetic_data['C'] = C
+
+    return semi_synthetic_data
+
+def run_semi_synthetic_dgp(oracle='afib', classifier='document', verbose=False):
+    # check if inputs are valid
+    if oracle != 'afib' and oracle != 'heart_fail' and oracle != 'kidney_fail':
+        return 'invalid input for oracle'
+    if classifier != 'sentence' and classifier != 'document':
+        return 'invalid input for classifier'
+
+    '''
+    Main code portion:
+    '''
     master_data = pd.read_csv('csv_files/master_data.csv')
 
     # find the candidates for using regular expression matching
     regex_candidates = []
 
     if oracle == 'afib':
-        zero_shot_preds = pd.read_csv('csv_files/predictions-xxl.csv')
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-atrialfibrillation-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl.csv')
         regex_candidates.append('atrial')
         regex_candidates.append('fibrillation')
     elif oracle == 'heart_fail':
-        zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-sentence.csv')
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-document.csv')
         regex_candidates.append('congestive')
         regex_candidates.append('heart')
         regex_candidates.append('failure')
     elif oracle == 'kidney_fail':
-        zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-sentence.csv')
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-document.csv')
         regex_candidates.append('acute')
         regex_candidates.append('kidney')
         regex_candidates.append('failure')
@@ -51,37 +95,10 @@ def run_semi_synthetic_dgp(oracle='afib', verbose=False):
     ace_predictions = []
     conf_intervals = []
     concurrency = []
-    odds_ratio = []
     for word in regex_candidates:
         regex_preds = regular_expression_predict(master_data['notes_half2'], [word])
 
-        # if verbose:
-        #     print(np.mean(master_data[oracle] == zero_shot_preds['prediction']))
-        #     print(np.mean(zero_shot_preds['prediction']))
-        #     print(create_confusion_matrix(master_data[oracle], zero_shot_preds['prediction']))
-        #     print()
-
-        #     print(np.mean(master_data[oracle] == regex_preds))
-        #     print(np.mean(regex_preds))
-        #     print(create_confusion_matrix(master_data[oracle], regex_preds))
-
-        semi_synthetic_data = pd.DataFrame({'U': master_data[oracle], 'W': zero_shot_preds['prediction'], 'Z': regex_preds,
-                                    'age': master_data['age'], 'gender': master_data['gender']})
-        
-        # generate semi-synthetic data
-        np.random.seed(3)
-
-        size = len(semi_synthetic_data)
-
-        C = np.random.normal(0, 1, size)
-
-        A = np.random.binomial(1, expit(0.8*semi_synthetic_data['U']+C), size)
-
-        Y = np.random.normal(0, 1, size) + 1.3*A + 1.4*semi_synthetic_data['U'] + C
-
-        semi_synthetic_data['A'] = A
-        semi_synthetic_data['Y'] = Y
-        semi_synthetic_data['C'] = C
+        semi_synthetic_data = create_semi_synthetic_dataframe(oracle, zero_shot_preds['prediction'], regex_preds)
 
         if verbose:
         #     print(odds_ratio('U', 'W', [], semi_synthetic_data))
@@ -95,28 +112,43 @@ def run_semi_synthetic_dgp(oracle='afib', verbose=False):
         #     print(odds_ratio('W', 'Z', ['U', 'age', 'gender'], semi_synthetic_data))
 
         # approximate the ACE
-        ace_predictions.append(proximal_find_ace('A', 'Y', 'W', 'Z', ['C'], semi_synthetic_data))
-        conf_intervals.append(compute_confidence_intervals("A", "Y", "W", "Z", ['C'], semi_synthetic_data))
+        ace_predictions.append(proximal_find_ace('A', 'Y', 'W', 'Z', ['age', 'gender'], semi_synthetic_data))
+        conf_intervals.append(compute_confidence_intervals('A', 'Y', 'W', 'Z', ['age', 'gender'], semi_synthetic_data))
 
     return (ace_predictions, conf_intervals, concurrency)
 
-def run_causal_null_hypothesis(oracle='afib', causal_effect=0, num_bootstraps=200, alpha=0.05, verbose=False, sample_size=None):
+def run_causal_null_hypothesis(oracle='afib', classifier='document', causal_effect=0, num_bootstraps=200, alpha=0.05, verbose=False, sample_size=None):
+    # check if inputs are valid
+    if oracle != 'afib' and oracle != 'heart_fail' and oracle != 'kidney_fail':
+        return 'invalid input for oracle'
+    if classifier != 'sentence' and classifier != 'document':
+        return 'invalid input for classifier'
+    
     master_data = pd.read_csv('csv_files/master_data.csv')
 
     # find the candidates for using regular expression matching
     regex_candidates = []
 
     if oracle == 'afib':
-        zero_shot_preds = pd.read_csv('csv_files/predictions-xxl.csv')
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-atrialfibrillation-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl.csv')
         regex_candidates.append('atrial')
         regex_candidates.append('fibrillation')
     elif oracle == 'heart_fail':
-        zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-sentence.csv')
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-document.csv')
         regex_candidates.append('congestive')
         regex_candidates.append('heart')
         regex_candidates.append('failure')
     elif oracle == 'kidney_fail':
-        zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-sentence.csv')
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-document.csv')
         regex_candidates.append('acute')
         regex_candidates.append('kidney')
         regex_candidates.append('failure')
@@ -135,28 +167,15 @@ def run_causal_null_hypothesis(oracle='afib', causal_effect=0, num_bootstraps=20
 
     for word in regex_candidates:
         regex_preds = regular_expression_predict(master_data['notes_half2'], [word])
-        semi_synthetic_data = pd.DataFrame({'U': master_data[oracle], 'W': zero_shot_preds['prediction'], 'Z': regex_preds,
-                                    'age': master_data['age'], 'gender': master_data['gender']})
+        semi_synthetic_data = create_semi_synthetic_dataframe(oracle, zero_shot_preds['prediction'], regex_preds, causal_effect=causal_effect)
+        
+        # pd.DataFrame({'U': master_data[oracle], 'W': zero_shot_preds['prediction'], 'Z': regex_preds,
+        #                            'age': master_data['age'], 'gender': master_data['gender']})
         
         # control the sample size of the experiment if desired
         if sample_size != None:
             semi_synthetic_data = semi_synthetic_data.sample(sample_size, replace=False)
             semi_synthetic_data.reset_index(drop=True, inplace=True)
-
-        # generate semi-synthetic data
-        np.random.seed(3)
-
-        size = len(semi_synthetic_data)
-
-        C = np.random.normal(0, 1, size)
-
-        A = np.random.binomial(1, expit(0.8*semi_synthetic_data['U']+C), size)
-
-        Y = np.random.normal(0, 1, size) + causal_effect*A + 1.4*semi_synthetic_data['U'] + C
-
-        semi_synthetic_data['A'] = A
-        semi_synthetic_data['Y'] = Y
-        semi_synthetic_data['C'] = C
 
         datasets.append(semi_synthetic_data)
 
@@ -171,7 +190,7 @@ def run_causal_null_hypothesis(oracle='afib', causal_effect=0, num_bootstraps=20
             # resample the data with replacement
             data_sampled = data.sample(len(data), replace=True)
             data_sampled.reset_index(drop=True, inplace=True)
-            product = product * proximal_find_ace('A', 'Y', 'W', 'Z', ['C'], data_sampled)
+            product = product * proximal_find_ace('A', 'Y', 'W', 'Z', ['age', 'gender'], data_sampled)
         
         if verbose:
             print(product)
@@ -185,7 +204,7 @@ def run_causal_null_hypothesis(oracle='afib', causal_effect=0, num_bootstraps=20
     
     return q_low, q_up
 
-def evaluate_errors_afib(sample_sizes=[5000, 10000, 15000, 20000], num_iterations=100):
+def evaluate_errors(oracle='afib', sample_sizes=[5000, 10000, 15000, 20000], num_iterations=100, verbose=False):
     results = []
 
     for sample_size in sample_sizes:
@@ -196,13 +215,19 @@ def evaluate_errors_afib(sample_sizes=[5000, 10000, 15000, 20000], num_iteration
         fn = 0
 
         for i in range(num_iterations):
-            interval = run_causal_null_hypothesis(causal_effect=0, sample_size=sample_size)
+            interval = run_causal_null_hypothesis(oracle=oracle, causal_effect=0, sample_size=sample_size)
+            if verbose:
+                print(interval)
+
             if interval[0] < 0 and interval[1] > 0:
                 tn += 1
             else:
                 fp += 1
 
-            interval = run_causal_null_hypothesis(causal_effect=1.3, sample_size=sample_size)
+            interval = run_causal_null_hypothesis(oracle=oracle, causal_effect=1.3, sample_size=sample_size)
+            if verbose:
+                print(interval)
+                
             if interval[0] < 0 and interval[1] > 0:
                 fn += 1
             else:
