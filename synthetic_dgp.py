@@ -16,6 +16,7 @@ from regex_predictor import *
 from odds_ratio import *
 from backdoor import *
 from bag_of_words import *
+from cohens_kappa import *
 
 def create_semi_synthetic_dataframe(oracle, W, Z, causal_effect=1.3, seed=1):
     master_data = pd.read_csv('csv_files/master_data.csv')
@@ -105,7 +106,8 @@ def run_semi_synthetic_dgp(oracle='afib', classifier='document', verbose=False):
         #     print(odds_ratio('U', 'Z', [], semi_synthetic_data))
 
         #     print()
-            concurrency.append(np.mean(semi_synthetic_data['W'] == semi_synthetic_data['Z']))
+            # concurrency.append(np.mean(semi_synthetic_data['W'] == semi_synthetic_data['Z']))
+            concurrency.append(cohens_kappa(semi_synthetic_data['W'], semi_synthetic_data['Z']))
         #     print()
 
             # odds_ratio.append(odds_ratio('W', 'Z', ['U'], semi_synthetic_data))
@@ -202,9 +204,45 @@ def run_causal_null_hypothesis(oracle='afib', classifier='document', causal_effe
     q_low = quantiles[0]
     q_up = quantiles[1]
     
-    return q_low, q_up
+    return q_low, q_up, products
 
-def evaluate_errors(oracle='afib', sample_sizes=[5000, 10000, 15000, 20000], num_iterations=100, verbose=False):
+def run_backdoor_adjustment(oracle='afib', classifier='document', causal_effect=0):
+    # run backdoor adjustment using the zero-shot predictors as the backdoor adjustment set
+
+    # check if inputs are valid
+    if oracle != 'afib' and oracle != 'heart_fail' and oracle != 'kidney_fail':
+        return 'invalid input for oracle'
+    if classifier != 'sentence' and classifier != 'document':
+        return 'invalid input for classifier'
+    
+    master_data = pd.read_csv('csv_files/master_data.csv')
+
+    if oracle == 'afib':
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-atrialfibrillation-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl.csv')
+    elif oracle == 'heart_fail':
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-congestiveheartfailure-document.csv')
+    elif oracle == 'kidney_fail':
+        if classifier == 'sentence':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-sentence.csv')
+        elif classifier == 'document':
+            zero_shot_preds = pd.read_csv('csv_files/predictions-xxl-acutekidneyfailure-document.csv')
+
+    # create the semi-synthetic dataset with just the zero-shot predictions as both of the proxies
+    semi_synthetic_data = create_semi_synthetic_dataframe(oracle, zero_shot_preds['prediction'], zero_shot_preds['prediction'], causal_effect=causal_effect)
+
+    point_estimate = backdoor_adjustment('Y', 'A', ['W', 'age', 'gender'], semi_synthetic_data)
+    confidence_interval = compute_confidence_intervals_backdoor('Y', 'A', ['W', 'age', 'gender'], semi_synthetic_data, 'backdoor')
+
+    return point_estimate, confidence_interval
+
+
+def evaluate_errors(oracle='afib', sample_sizes=[100, 500, 1000, 1500], num_iterations=100, verbose=False):
     results = []
 
     for sample_size in sample_sizes:
