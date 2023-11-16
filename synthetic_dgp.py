@@ -1,4 +1,6 @@
 """
+09-29-2023
+
 Code for running a semi-synthetic DGP setup to find average causal effect and confidence intervals.
 """
 
@@ -19,6 +21,15 @@ from bag_of_words import *
 from cohens_kappa import *
 
 def create_semi_synthetic_dataframe(oracle, W, Z, causal_effect=1.3, seed=1):
+    """
+    Generates semi-synthetic data and returns it as a dataframe.
+
+    The variable oracle specifies whether the generated data will use afib, acute kidney failure,
+    or congestive heart failure as the unmeasured confounder.
+
+    W and Z are pre-generated from zero-shot classifiers.
+    """
+
     master_data = pd.read_csv('csv_files/master_data.csv')
 
     semi_synthetic_data = pd.DataFrame({'U': master_data[oracle], 'W': W, 'Z': Z,
@@ -102,21 +113,14 @@ def run_semi_synthetic_dgp(oracle='afib', classifier='document', verbose=False):
         semi_synthetic_data = create_semi_synthetic_dataframe(oracle, zero_shot_preds['prediction'], regex_preds)
 
         if verbose:
-        #     print(odds_ratio('U', 'W', [], semi_synthetic_data))
-        #     print(odds_ratio('U', 'Z', [], semi_synthetic_data))
-
-        #     print()
-            # concurrency.append(np.mean(semi_synthetic_data['W'] == semi_synthetic_data['Z']))
             concurrency.append(cohens_kappa(semi_synthetic_data['W'], semi_synthetic_data['Z']))
-        #     print()
-
-            # odds_ratio.append(odds_ratio('W', 'Z', ['U'], semi_synthetic_data))
-        #     print(odds_ratio('W', 'Z', ['U', 'age', 'gender'], semi_synthetic_data))
 
         # approximate the ACE
         ace_predictions.append(proximal_find_ace('A', 'Y', 'W', 'Z', ['age', 'gender'], semi_synthetic_data))
         conf_intervals.append(compute_confidence_intervals('A', 'Y', 'W', 'Z', ['age', 'gender'], semi_synthetic_data))
 
+    # return the ACE predictions using each regex predictor, the confidence interval, and the Cohen's kappa
+    # between each regex predictor and the Flan-T5 predictions.
     return (ace_predictions, conf_intervals, concurrency)
 
 def run_causal_null_hypothesis(oracle='afib', classifier='document', causal_effect=0, num_bootstraps=200, alpha=0.05, verbose=False, sample_size=None):
@@ -126,6 +130,10 @@ def run_causal_null_hypothesis(oracle='afib', classifier='document', causal_effe
     if classifier != 'sentence' and classifier != 'document':
         return 'invalid input for classifier'
     
+    """
+    Runs causal null hypothesis testing, which multiplies all the ACE predictions for each regex predictor
+    together to form a test statistic.
+    """
     master_data = pd.read_csv('csv_files/master_data.csv')
 
     # find the candidates for using regular expression matching

@@ -1,7 +1,7 @@
 """
 09-27-2023
 
-Code for implementing Cohen's Kappa that compares the similarities between two
+Code for implementing Kohen's Kappa that compares the similarities between two
 sets of labels for the same thing.
 """
 
