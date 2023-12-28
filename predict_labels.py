@@ -45,7 +45,7 @@ def sentence_level_classifier(condition, sentences, tokenizer, model):
 
     return 0
 
-def predict_labels(condition, method='document', testing=False):
+def predict_labels(condition, method='document', text_partition=1, testing=False):
     # condition is what you would like to insert into the prompt
     # type is whether you want to be using a document level classifier or a sentence level classifier
     # if testing is set to True, then the program will terminate after processing the first 5 rows of data
@@ -72,7 +72,7 @@ def predict_labels(condition, method='document', testing=False):
         #############################
 
         if method == 'document':
-            predictions.append(document_level_classifier(condition, row['notes_half1'], tokenizer, model))
+            predictions.append(document_level_classifier(condition, row['notes_half'+str(text_partition)], tokenizer, model))
 
         #############################
         # the following code is for sentence level classification
@@ -82,4 +82,4 @@ def predict_labels(condition, method='document', testing=False):
             predictions.append(sentence_level_classifier(condition, all_sentences[index], tokenizer, model))
 
     prediction_data = pd.DataFrame({'prediction': predictions})
-    prediction_data.to_csv('csv_files/predictions-xxl-'+ condition.replace(' ', '') + '-' + method +'.csv', index=False)
+    prediction_data.to_csv('csv_files/predictions-xxl-'+ condition.replace(' ', '') + '-' + method + '-texthalf' + str(text_partition) + '.csv', index=False)
